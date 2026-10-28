@@ -1,11 +1,10 @@
-// ─────────────────────────────────────────────────────────────
-// Firebase 콘솔 › 프로젝트 설정 › 내 앱(웹)에서 보이는
-//   const firebaseConfig = { apiKey: "...", ... };
-// 블록만 아래 두 줄 사이에 붙여 넣으세요. (import 줄은 빼고)
-// ─────────────────────────────────────────────────────────────
-
-// ▼ 여기부터 붙여넣기
-
-// ▲ 여기까지
+const firebaseConfig = {
+  apiKey: "AIzaSyCL1BzkgJPdegVtGKWV_FvmtztBApm5qfQ",
+  authDomain: "pocket-note-8ee60.firebaseapp.com",
+  projectId: "pocket-note-8ee60",
+  storageBucket: "pocket-note-8ee60.firebasestorage.app",
+  messagingSenderId: "51689278602",
+  appId: "1:51689278602:web:7b9da9997dee5fde07f173"
+};
 
 window.POCKET_FIREBASE = (typeof firebaseConfig !== 'undefined') ? firebaseConfig : null;
