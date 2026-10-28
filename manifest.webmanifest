@@ -1,0 +1,20 @@
+{
+  "name": "포켓 노트",
+  "short_name": "포켓 노트",
+  "description": "업노트 구조에 옵시디언 마크다운을 더한 개인 메모",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f5",
+  "theme_color": "#2c6e5f",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "새 노트", "url": "./#new", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "오늘 일기", "url": "./#daily", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
