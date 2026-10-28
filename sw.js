@@ -1,5 +1,5 @@
 // 포켓 노트 service worker: opens instantly from the device copy, refreshes files in the background.
-const VERSION = 'pn-2026-10-28-1';
+const VERSION = 'pn-2026-10-28-2';
 const EXT = VERSION + '-ext';
 const SHELL = ['./', './index.html', './backend.js', './manifest.webmanifest',
   './vendor/marked.min.js', './vendor/purify.min.js', './vendor/jszip.min.js', './vendor/Sortable.min.js',
@@ -9,7 +9,7 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION && k !== EXT).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('pn-') && k !== VERSION && k !== EXT).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 async function staleWhileRevalidate(req, key) {
