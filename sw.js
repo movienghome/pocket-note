@@ -2,7 +2,7 @@
 // The same file runs in the app folder and in beta/; each keeps its own cache (pn- / pnb-).
 const BETA = self.location.pathname.includes('/beta/');
 const PRE = BETA ? 'pnb-' : 'pn-';
-const VERSION = PRE + '2026-11-05-1';
+const VERSION = PRE + '2026-11-05-2';
 const EXT = VERSION + '-ext';
 const SHELL = ['./', './index.html', './backend.js', './manifest.webmanifest',
   './vendor/marked.min.js', './vendor/purify.min.js', './vendor/jszip.min.js', './vendor/Sortable.min.js',

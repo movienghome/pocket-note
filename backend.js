@@ -4,6 +4,9 @@ const base = `https://www.gstatic.com/firebasejs/${V}/`;
 const $ = s => document.querySelector(s);
 const gate = $('#gate');
 const cfg = window.POCKET_FIREBASE;
+const BETA = location.pathname.includes('/beta/');
+// Beta opened through an old cached page of the main app: reload once so the beta's own files load.
+if (BETA && !window.PN_BETA) { try { if (!sessionStorage.getItem('pnb-reloaded')) { sessionStorage.setItem('pnb-reloaded', '1'); setTimeout(() => location.reload(), 1200); } } catch (e) {} }
 
 if (!cfg || !cfg.apiKey) {
   gate.hidden = false; $('#login').hidden = true; $('#nocfg').hidden = false;
@@ -77,11 +80,14 @@ async function start() {
     };
   }
 
-  /* ---------- attachments: stored as ~900KB byte chunks in Firestore ---------- */
+  /* ---------- attachments: stored as ~900KB byte chunks in Firestore ----------
+     data/users/{uid}/blobs/items/{id}       file info (type, size, chunk count)
+     data/users/{uid}/blobs/items/{id}/c/{i} the bytes
+     (Firestore needs an even number of path parts for a document; the old path had an odd count, so every upload failed.) */
   const urls = new Map(), loading = new Map();
   const CH = 900 * 1024, MAX = 20 * 1024 * 1024;
   let uid = null;
-  const bpath = id => `data/users/${uid}/blobs/${id}`;
+  const bpath = id => `data/users/${uid}/blobs/items/${id}`;
   const hex = n => [...crypto.getRandomValues(new Uint8Array(n / 2))].map(b => b.toString(16).padStart(2, '0')).join('');
   async function upload(blob, opt) {
     if (blob.size > MAX) throw { code: 'too_large', message: '20MB까지' };
@@ -114,6 +120,25 @@ async function start() {
     const a = document.createElement('a'); a.href = u; a.download = filename; a.style.display = 'none'; document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1000);
     setTimeout(() => URL.revokeObjectURL(u), 60000); return { status: 'saved' }; } };
 
+  // Beta works on its own copy of the real notes. Attachments are shared, and nothing ever deletes them.
+  const LIVE = () => `data/users/${uid}`;
+  async function copyDocs(src, dst) {
+    const old = await F.getDocs(F.collection(fs, dst));
+    for (let i = 0; i < old.docs.length; i += 40) await Promise.all(old.docs.slice(i, i + 40).map(d => F.deleteDoc(F.doc(fs, dst + '/' + d.id))));
+    const cur = await F.getDocs(F.collection(fs, src));
+    for (let i = 0; i < cur.docs.length; i += 40) await Promise.all(cur.docs.slice(i, i + 40).map(d => F.setDoc(F.doc(fs, dst + '/' + d.id), d.data())));
+    return cur.size;
+  }
+  async function copyFromLive() {
+    if (!BETA) return;
+    const U = LIVE();
+    const n = await copyDocs(`${U}/vault/notes`, `${U}/vault-beta/notes`);
+    await copyDocs(`${U}/vault/versions`, `${U}/vault-beta/versions`);
+    for (const d of ['meta', 'files']) { const s = await F.getDoc(F.doc(fs, `${U}/${d}`)); await F.setDoc(F.doc(fs, `${U}/${d}-beta`), s.exists() ? s.data() : {}); }
+    await F.setDoc(F.doc(fs, `${U}/vault-beta`), { copiedAt: Date.now(), notes: n });
+    try { localStorage.removeItem('pnb:mm-cache'); } catch (e) {}
+  }
+
   Object.assign(window.PN, { cachedUrl: id => urls.get(id) || null, account: () => auth.currentUser && { email: auth.currentUser.email } });
 
   let resolved = false;
@@ -122,12 +147,13 @@ async function start() {
       gate.hidden = true;
       if (resolved) { if (user.uid !== uid) location.reload(); return; }
       resolved = true; uid = user.uid;
+      if (BETA) { try { const has = await F.getDoc(F.doc(fs, `${LIVE()}/vault-beta`)); if (!has.exists()) { gate.hidden = false; $('#login').hidden = true; $('#nocfg').hidden = false; $('#nocfg p').textContent = '베타용으로 실제 노트를 복사하는 중이에요… (처음 한 번만)'; await copyFromLive(); gate.hidden = true; } } catch (e) { console.error(e); gate.hidden = true; } }
       window.__pnResolve({
         db: { doc: docApi, collection: p => colApi(p) },
         user: { id: async () => uid, isOwner: () => true, canEdit: () => true, can: () => true },
         assets: { upload },
         downloads,
-        getBlob, blobUrl,
+        getBlob, blobUrl, copyFromLive,
         logout: async () => { await A.signOut(auth); try { await F.terminate(fs); await F.clearIndexedDbPersistence(fs); } catch (e) {} location.reload(); }
       });
     } else {
