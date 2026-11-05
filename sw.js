@@ -1,5 +1,8 @@
 // 포켓 노트 service worker: opens instantly from the device copy, refreshes files in the background.
-const VERSION = 'pn-2026-10-28-2';
+// The same file runs in the app folder and in beta/; each keeps its own cache (pn- / pnb-).
+const BETA = self.location.pathname.includes('/beta/');
+const PRE = BETA ? 'pnb-' : 'pn-';
+const VERSION = PRE + '2026-11-05-1';
 const EXT = VERSION + '-ext';
 const SHELL = ['./', './index.html', './backend.js', './manifest.webmanifest',
   './vendor/marked.min.js', './vendor/purify.min.js', './vendor/jszip.min.js', './vendor/Sortable.min.js',
@@ -9,7 +12,7 @@ self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('pn-') && k !== VERSION && k !== EXT).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith(PRE) && k !== VERSION && k !== EXT).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 async function staleWhileRevalidate(req, key) {
@@ -36,10 +39,12 @@ self.addEventListener('fetch', e => {
   const req = e.request; if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin === location.origin) {
+    if (!BETA && url.pathname.startsWith(new URL('./beta/', self.location).pathname)) return;  // the beta has its own worker
     if (url.pathname.endsWith('/config.js')) { e.respondWith(networkFirst(req)); return; }
     if (req.mode === 'navigate') { e.respondWith(staleWhileRevalidate(req, './index.html')); return; }
     e.respondWith(staleWhileRevalidate(req)); return;
   }
   if (url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/')) { e.respondWith(cacheFirst(req)); return; }
   if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') { e.respondWith(cacheFirst(req)); return; }
+  if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('pretendard')) { e.respondWith(cacheFirst(req)); return; }
 });
