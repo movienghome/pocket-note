@@ -1569,7 +1569,7 @@ document.addEventListener('touchcancel',()=>{if(lp){clearTimeout(lp.t);lp=null}}
 const fromTouch=()=>now()-touchAt<1200;
 document.addEventListener('contextmenu',e=>{const t=e.target;if(t.closest('.veil,.menu,.gate'))return;
   const pt={x:e.clientX,y:e.clientY};
-  const it=t.closest('.item[data-open]');if(it){e.preventDefault();if(now()-S.lpAt<900)return;S.lpAt=now();if(lp){clearTimeout(lp.t);lp.fired=true}itemMenu(it.dataset.open,pt);return}
+  const it=t.closest('.item[data-open]');if(it){e.preventDefault();if(fromTouch()&&now()-S.lpAt<900)return;S.lpAt=now();if(lp){clearTimeout(lp.t);lp.fired=true}itemMenu(it.dataset.open,pt);return}
   if(fromTouch()){if(t.closest('.side .nav,.note-bar'))e.preventDefault();return}  // phones: keep the normal long-press in text
   if(t.closest('input,textarea#q,select'))return;
   if(t.closest('#live,#ed,#md,.page')){if(e.shiftKey)return;e.preventDefault();editorMenu(pt);return}

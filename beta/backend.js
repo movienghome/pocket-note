@@ -5,6 +5,8 @@ const $ = s => document.querySelector(s);
 const gate = $('#gate');
 const cfg = window.POCKET_FIREBASE;
 const BETA = location.pathname.includes('/beta/');
+// Bump on every release of the main app: the first open of a new release folds the beta's records into the real ones.
+const RELEASE = '2026-11-05-3';
 // Beta opened through an old cached page of the main app: reload once so the beta's own files load.
 if (BETA && !window.PN_BETA) { try { if (!sessionStorage.getItem('pnb-reloaded')) { sessionStorage.setItem('pnb-reloaded', '1'); setTimeout(() => location.reload(), 1200); } } catch (e) {} }
 
@@ -60,8 +62,8 @@ async function start() {
       path, id: r.id,
       collection: c => colApi(path + '/' + c),
       get: async () => { try { return wrap(await F.getDoc(r)); } catch (e) { return wrap(await F.getDocFromCache(r)); } },
-      set: d => fastWrite(F.setDoc(r, d)),
-      update: d => fastWrite(F.updateDoc(r, d)),
+      set: d => fastWrite(F.setDoc(r, { ...d, _t: Date.now() })),
+      update: d => fastWrite(F.updateDoc(r, { ...d, _t: Date.now() })),
       delete: () => fastWrite(F.deleteDoc(r)),
       onSnapshot: (next, error) => F.onSnapshot(r, s => next(wrap(s)), e => error && error({ code: e.code === 'permission-denied' ? 'revoked' : 'unavailable', message: e.message }))
     };
@@ -122,22 +124,76 @@ async function start() {
 
   // Beta works on its own copy of the real notes. Attachments are shared, and nothing ever deletes them.
   const LIVE = () => `data/users/${uid}`;
+  const D = p => F.doc(fs, p);
+  async function all(col) { const q = await F.getDocs(F.collection(fs, col)); return new Map(q.docs.map(d => [d.id, d.data()])); }
+  async function inChunks(list, fn) { for (let i = 0; i < list.length; i += 40) await Promise.all(list.slice(i, i + 40).map(fn)); }
   async function copyDocs(src, dst) {
-    const old = await F.getDocs(F.collection(fs, dst));
-    for (let i = 0; i < old.docs.length; i += 40) await Promise.all(old.docs.slice(i, i + 40).map(d => F.deleteDoc(F.doc(fs, dst + '/' + d.id))));
-    const cur = await F.getDocs(F.collection(fs, src));
-    for (let i = 0; i < cur.docs.length; i += 40) await Promise.all(cur.docs.slice(i, i + 40).map(d => F.setDoc(F.doc(fs, dst + '/' + d.id), d.data())));
-    return cur.size;
+    const old = await all(dst); await inChunks([...old.keys()], id => F.deleteDoc(D(dst + '/' + id)));
+    const cur = await all(src); await inChunks([...cur], ([id, v]) => F.setDoc(D(dst + '/' + id), v));
+    return cur;
   }
   async function copyFromLive() {
     if (!BETA) return;
-    const U = LIVE();
-    const n = await copyDocs(`${U}/vault/notes`, `${U}/vault-beta/notes`);
+    const U = LIVE(), at = Date.now();
+    const notes = await copyDocs(`${U}/vault/notes`, `${U}/vault-beta/notes`);
     await copyDocs(`${U}/vault/versions`, `${U}/vault-beta/versions`);
-    for (const d of ['meta', 'files']) { const s = await F.getDoc(F.doc(fs, `${U}/${d}`)); await F.setDoc(F.doc(fs, `${U}/${d}-beta`), s.exists() ? s.data() : {}); }
-    await F.setDoc(F.doc(fs, `${U}/vault-beta`), { copiedAt: Date.now(), notes: n });
+    let meta = {};
+    for (const d of ['meta', 'files']) { const s = await F.getDoc(D(`${U}/${d}`)); const v = s.exists() ? s.data() : {}; if (d === 'meta') meta = v; await F.setDoc(D(`${U}/${d}-beta`), v); }
+    await F.setDoc(D(`${U}/vault-beta`), { copiedAt: at, notes: notes.size, ids: [...notes.keys()],
+      fids: (meta.folders || []).map(f => f.id), flids: (meta.filters || []).map(f => f.id) });
     try { localStorage.removeItem('pnb:mm-cache'); } catch (e) {}
   }
+  // Newest wins. Only things changed in beta after the copy move over; things changed in the real app are kept.
+  function planMerge(beta, live, copiedAt, atCopy, tOf) {
+    const set = [], del = [];
+    for (const [id, b] of beta) {
+      const tb = tOf(b); if (tb <= copiedAt) continue;
+      const l = live.get(id);
+      if (!l) { if (atCopy && atCopy.has(id)) continue; }
+      else if (tOf(l) >= tb) continue;
+      set.push([id, b]);
+    }
+    if (atCopy) for (const id of atCopy) { if (beta.has(id)) continue; const l = live.get(id); if (l && tOf(l) <= copiedAt) del.push(id); }
+    return { set, del };
+  }
+  const tNote = d => Math.max(d._t || 0, d.updated || 0, d.trashedAt || 0);
+  function unionById(win, other, atCopy) { const ids = new Set(win.map(x => x.id)); return [...win, ...other.filter(x => !ids.has(x.id) && !atCopy.has(x.id))]; }
+  async function mergeBetaIntoLive() {
+    const U = LIVE(); const mk = await F.getDoc(D(`${U}/vault-beta`));
+    if (!mk.exists() || mk.data().merged) return 0;
+    const m = mk.data(), C = m.copiedAt || 0, atCopy = m.ids ? new Set(m.ids) : null;
+    const [B, L] = await Promise.all([all(`${U}/vault-beta/notes`), all(`${U}/vault/notes`)]);
+    const { set, del } = planMerge(B, L, C, atCopy, tNote);
+    await inChunks(set, ([id, v]) => F.setDoc(D(`${U}/vault/notes/${id}`), v));
+    await inChunks(del, id => Promise.all([F.deleteDoc(D(`${U}/vault/notes/${id}`)), F.deleteDoc(D(`${U}/vault/versions/${id}`))]));
+    // version history of the notes that moved: keep both sides' snapshots
+    await inChunks(set, async ([id]) => {
+      const [bv, lv] = await Promise.all([F.getDoc(D(`${U}/vault-beta/versions/${id}`)), F.getDoc(D(`${U}/vault/versions/${id}`))]);
+      if (!bv.exists()) return; const seen = new Set(); let items = [...((lv.exists() && lv.data().items) || []), ...(bv.data().items || [])]
+        .filter(x => x && !seen.has(x.t + '|' + x.body.length) && seen.add(x.t + '|' + x.body.length)).sort((a, b) => b.t - a.t).slice(0, 60);
+      while (JSON.stringify(items).length > 230000 && items.length > 1) items.pop();
+      await F.setDoc(D(`${U}/vault/versions/${id}`), { items });
+    });
+    // folders, filters, settings: the newer side wins; the other side's newly made folders/filters are kept too
+    const [bm, lm] = await Promise.all([F.getDoc(D(`${U}/meta-beta`)), F.getDoc(D(`${U}/meta`))]);
+    let metaMoved = false;
+    if (bm.exists()) { const b = bm.data(), l = lm.exists() ? lm.data() : {};
+      if ((b._t || 0) > C && (b._t || 0) > (l._t || 0)) {
+        const out = { ...b, folders: unionById(b.folders || [], l.folders || [], new Set(m.fids || [])), filters: unionById(b.filters || [], l.filters || [], new Set(m.flids || [])), lastExport: Math.max(b.lastExport || 0, l.lastExport || 0) };
+        await F.setDoc(D(`${U}/meta`), out); metaMoved = true;
+      } else if ((b._t || 0) > C) {
+        const fids = new Set(m.fids || []), flids = new Set(m.flids || []);
+        const nf = (b.folders || []).filter(f => !fids.has(f.id) && !(l.folders || []).some(x => x.id === f.id)), nfl = (b.filters || []).filter(f => !flids.has(f.id) && !(l.filters || []).some(x => x.id === f.id));
+        if (nf.length || nfl.length) { await F.setDoc(D(`${U}/meta`), { ...l, folders: [...(l.folders || []), ...nf], filters: [...(l.filters || []), ...nfl] }); metaMoved = true; }
+      } }
+    // attachment list: everything from both sides
+    const [bf, lf] = await Promise.all([F.getDoc(D(`${U}/files-beta`)), F.getDoc(D(`${U}/files`))]);
+    if (bf.exists()) { const have = new Set(((lf.exists() && lf.data().list) || []).map(x => x.name)); const add = (bf.data().list || []).filter(x => x && !have.has(x.name));
+      if (add.length) await F.setDoc(D(`${U}/files`), { list: [...((lf.exists() && lf.data().list) || []), ...add] }); }
+    await F.setDoc(D(`${U}/vault-beta`), { merged: true, mergedAt: Date.now() }, { merge: true });  // next beta visit starts from a fresh copy
+    return set.length + del.length + (metaMoved ? 1 : 0);
+  }
+  async function busy(t) { gate.hidden = false; $('#login').hidden = true; $('#nocfg').hidden = false; $('#nocfg p').textContent = t; }
 
   Object.assign(window.PN, { cachedUrl: id => urls.get(id) || null, account: () => auth.currentUser && { email: auth.currentUser.email } });
 
@@ -147,7 +203,12 @@ async function start() {
       gate.hidden = true;
       if (resolved) { if (user.uid !== uid) location.reload(); return; }
       resolved = true; uid = user.uid;
-      if (BETA) { try { const has = await F.getDoc(F.doc(fs, `${LIVE()}/vault-beta`)); if (!has.exists()) { gate.hidden = false; $('#login').hidden = true; $('#nocfg').hidden = false; $('#nocfg p').textContent = '베타용으로 실제 노트를 복사하는 중이에요… (처음 한 번만)'; await copyFromLive(); gate.hidden = true; } } catch (e) { console.error(e); gate.hidden = true; } }
+      if (BETA) { try { const has = await F.getDoc(D(`${LIVE()}/vault-beta`)); if (!has.exists() || has.data().merged) { busy('베타용으로 실제 노트를 복사하는 중이에요…'); await copyFromLive(); } } catch (e) { console.error(e); } gate.hidden = true; }
+      else { try { const rd = D(`${LIVE()}/vault`); const r = await F.getDoc(rd);
+        if (!r.exists() || r.data().release !== RELEASE) { busy('새 버전 준비 중 · 베타에서 쓴 기록을 합치는 중이에요…'); const n = await mergeBetaIntoLive();
+          await F.setDoc(rd, { release: RELEASE, releasedAt: Date.now() }, { merge: true });
+          if (n) { $('#nocfg p').textContent = `베타에서 바뀐 기록 ${n}건을 실제 노트에 합쳤어요.`; await new Promise(z => setTimeout(z, 1600)); } } }
+        catch (e) { console.error('beta merge', e); } gate.hidden = true; }
       window.__pnResolve({
         db: { doc: docApi, collection: p => colApi(p) },
         user: { id: async () => uid, isOwner: () => true, canEdit: () => true, can: () => true },
