@@ -6,7 +6,7 @@ const gate = $('#gate');
 const cfg = window.POCKET_FIREBASE;
 const BETA = location.pathname.includes('/beta/');
 // Bump on every release of the main app: the first open of a new release folds the beta's records into the real ones.
-const RELEASE = '2026-11-05-3';
+const RELEASE = '2026-11-21-2';
 // Beta opened through an old cached page of the main app: reload once so the beta's own files load.
 if (BETA && !window.PN_BETA) { try { if (!sessionStorage.getItem('pnb-reloaded')) { sessionStorage.setItem('pnb-reloaded', '1'); setTimeout(() => location.reload(), 1200); } } catch (e) {} }
 
