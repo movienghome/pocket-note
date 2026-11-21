@@ -194,7 +194,17 @@ body.lvdrag,body.lvdrag *{user-select:none!important;-webkit-user-select:none!im
 .ln.hr{position:relative;color:transparent}
 .ln.hr::after{content:"";position:absolute;left:0;right:0;top:50%;border-top:1px solid var(--line)}
 .ln.raw.hr{color:inherit}.ln.raw.hr::after{display:none}
-.ln img,.md img{max-width:100%;max-height:360px;border-radius:6px;display:block;margin:4px 0}
+.ln img,.md img{max-width:100%;max-height:360px;border-radius:6px;display:block;margin:4px 0;cursor:zoom-in}
+.imgv{position:fixed;inset:0;z-index:38;background:#000;color:#fff;display:flex;flex-direction:column;user-select:none;-webkit-user-select:none}
+.ivbar{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;gap:6px;padding:calc(8px + env(safe-area-inset-top,0px)) max(10px,env(safe-area-inset-right,0px)) 14px max(10px,env(safe-area-inset-left,0px));background:linear-gradient(rgba(0,0,0,.65),rgba(0,0,0,0));transition:opacity .15s}
+.ivbar .ivc{flex:1;font-size:14px;opacity:.9}
+.ivbar button,.ivnav{background:rgba(255,255,255,.18);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px}
+.imgv.hideui .ivbar,.imgv.hideui .ivnav{opacity:0;pointer-events:none}
+.ivstage{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;touch-action:none}
+.ivstage img{max-width:100%;max-height:100%;border-radius:0;margin:0;transform-origin:center;will-change:transform;cursor:default}
+.ivnav{position:absolute;top:50%;z-index:2;font-size:22px;padding:10px 14px;transform:translateY(-50%)}
+.ivnav.l{left:8px}.ivnav.r{right:8px}
+@media (hover:none){.ivnav{display:none}}
 .ln.tb{font-family:var(--f-mono);font-size:.86em;white-space:pre;overflow-x:auto}
 .cm{color:var(--muted);opacity:.6}
 .wl,.md a.wl{color:var(--accent);border-bottom:1px dashed var(--accent);cursor:pointer;text-decoration:none}
@@ -1127,6 +1137,7 @@ function maybeVersion(n,prevBody){const last=S.lastSnap[n.id]||0;if(now()-last<1
 
 /* ---------- note ops ---------- */
 function newNote(body='',folderId,name=''){const v=S.view;const f=folderId!==undefined?folderId:(v.k==='folder'?v.id:'');
+  if(!body&&!name&&inDiary(f))return dailyNote(f);
   const n=derive({id:uid(),body,name,folder:f,fav:false,trashed:false,created:now(),updated:now()});
   if(v.k==='fav')n.fav=true;if(v.k==='tag'&&!body){n.body='\n\n#'+v.id;derive(n)}
   S.notes.set(n.id,n);if(['trash','unfiled','untagged','filter','images','todo'].includes(v.k)&&!(v.k==='unfiled'&&!f))S.view={k:'all'};
@@ -1151,14 +1162,70 @@ function trashNotes(L){flushEdit();const curIn=L.some(n=>n.id===S.cur);const i=l
   renderSide();toast(L.length>1?`${L.length}개를 휴지통으로 옮겼습니다`:'휴지통으로 옮겼습니다')}
 async function purge(n){S.notes.delete(n.id);if(S.cur===n.id)S.cur=null;cacheSoon();renderAll();if(notesCol){await queue(n.id,()=>notesCol.doc(n.id).delete());queue('v'+n.id,()=>verCol.doc(n.id).delete())}}
 const templates=()=>[...S.notes.values()].filter(n=>!n.trashed&&n.folder===TPL).sort((x,y)=>x.title.localeCompare(y.title,'ko'));
-function dailyNote(){let fid=(F().find(f=>!f.parent&&f.name==='일기')||{}).id;if(!fid){fid=uid();S.meta.folders.push({id:fid,name:'일기',parent:'',icon:'📔',order:-1});saveMeta()}
-  const key=fmt(now(),'YYYY-MM-DD');const ex=[...S.notes.values()].find(n=>!n.trashed&&n.folder===fid&&(n.name===key||n.title.startsWith(key)));
-  S.view={k:'folder',id:fid};S.q='';closeDrawer();if(ex){renderAll();open(ex.id);return}
+const diaryRoot=()=>(F().find(f=>!f.parent&&f.name==='일기')||{}).id;
+function inDiary(fid){const r=diaryRoot();if(!r||!fid)return false;let f=folder(fid),g=0;while(f&&g++<30){if(f.id===r)return true;f=folder(f.parent)}return false}
+/* 앱에서는 실행되지 않는 dataview 블록(과 바로 앞 제목)은 빼서 일기를 가볍게 시작 */
+const stripDv=b=>b.replace(/(?:^#{1,6}[^\n]*\n+)?```dataview[\s\S]*?```[ \t]*\n*/gm,'').replace(/\n{3,}/g,'\n\n').trimEnd()+'\n\n';
+function dailyNote(fid0){let root=diaryRoot();if(!root){root=uid();S.meta.folders.push({id:root,name:'일기',parent:'',icon:'📔',order:-1});saveMeta()}
+  const key=fmt(now(),'YYYY.MM.DD(ddd)'),old=fmt(now(),'YYYY-MM-DD');
+  const ex=[...S.notes.values()].find(n=>!n.trashed&&inDiary(n.folder)&&(n.name===key||n.title===key||n.name===old||n.title.startsWith(old)));
+  const fid=ex?ex.folder:(fid0&&inDiary(fid0)?fid0:root);
+  S.view={k:'folder',id:fid};S.q='';closeDrawer();if(ex){renderAll();open(ex.id);toast('오늘 일기가 이미 있어 열었습니다');return ex}
   const tpl=templates().find(n=>/일기|daily/i.test(n.title));
-  const body=tpl?applyTpl(tpl.body,key):`# ${fmt(now(),'M월 D일 dddd')}\n\n`;
-  newNote(body,fid,key)}
+  const body=stripDv(applyTpl(tpl?tpl.body:SEED_TPL[0].body,key));
+  return newNote(body,fid,key)}
 function fromTemplate(t){return newNote(applyTpl(t.body,''))}
 function seedTemplates(){let c=0;SEED_TPL.forEach(t=>{if([...S.notes.values()].some(n=>!n.trashed&&n.folder===TPL&&n.name===t.name))return;const n=derive({id:uid(),name:t.name,body:t.body,folder:TPL,fav:false,trashed:false,created:now(),updated:now()});S.notes.set(n.id,n);persist(n);c++});renderAll();toast(`템플릿 ${c}개를 넣었습니다`)}
+
+/* ---------- image viewer ---------- */
+const IV={el:null,list:[],i:0,sc:1,x:0,y:0,title:''};let ivSkip=0,ivDown=null;
+const IV_PH=/^data:image\/gif/;
+function openViewer(img){const root=img.closest('#live,#md');if(!root)return;if(IV_PH.test(img.src)){toast('이미지 불러오는 중… 다시 눌러 주세요');return}
+  const L=[...root.querySelectorAll('img')].filter(im=>im.src&&!IV_PH.test(im.src));IV.list=L.map(im=>im.currentSrc||im.src);IV.i=Math.max(0,L.indexOf(img));IV.title=(curNote()||{}).title||'이미지';
+  closeViewer();const v=document.createElement('div');v.className='imgv';v.id='imgv';
+  v.innerHTML=`<div class="ivbar"><span class="ivc"></span><button data-iv="save">저장</button><button data-iv="all">전체 저장</button><button data-iv="x" aria-label="닫기">✕</button></div><button class="ivnav l" data-iv="prev" aria-label="이전">‹</button><button class="ivnav r" data-iv="next" aria-label="다음">›</button><div class="ivstage"><img alt="" draggable="false"></div>`;
+  document.body.appendChild(v);IV.el=v;ivShow(IV.i);ivBind(v)}
+function closeViewer(){if(IV.el){IV.el.remove();IV.el=null}}
+function ivApply(){const im=IV.el&&IV.el.querySelector('.ivstage img');if(!im)return;if(IV.sc<=1){IV.sc=1;IV.x=0;IV.y=0}else{const mx=(IV.sc-1)*im.clientWidth/2,my=(IV.sc-1)*im.clientHeight/2;IV.x=Math.max(-mx,Math.min(mx,IV.x));IV.y=Math.max(-my,Math.min(my,IV.y))}
+  im.style.transform=`translate(${IV.x}px,${IV.y}px) scale(${IV.sc})`}
+function ivShow(i){const n=IV.list.length;if(!IV.el||i<0||i>=n)return;IV.i=i;IV.sc=1;IV.x=0;IV.y=0;const im=IV.el.querySelector('.ivstage img');im.src=IV.list[i];ivApply();
+  IV.el.querySelector('.ivc').textContent=`${i+1} / ${n}`;IV.el.querySelectorAll('.ivnav').forEach(b=>b.style.visibility=(b.dataset.iv==='prev'?i===0:i===n-1)?'hidden':'')}
+function ivBind(v){const st=v.querySelector('.ivstage');const P=new Map();let g=null,lastTap=0;
+  st.addEventListener('pointerdown',e=>{st.setPointerCapture(e.pointerId);P.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(P.size===2){const [a,b]=[...P.values()];g={mode:'pinch',d:Math.hypot(a.x-b.x,a.y-b.y)||1,sc:IV.sc}}
+    else if(P.size===1)g={mode:'one',x:e.clientX,y:e.clientY,ox:IV.x,oy:IV.y,t:now(),moved:false}});
+  st.addEventListener('pointermove',e=>{if(!P.has(e.pointerId)||!g)return;P.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(g.mode==='pinch'&&P.size>=2){const [a,b]=[...P.values()];IV.sc=Math.max(1,Math.min(6,g.sc*Math.hypot(a.x-b.x,a.y-b.y)/g.d));ivApply();return}
+    if(g.mode==='one'){const dx=e.clientX-g.x,dy=e.clientY-g.y;if(Math.hypot(dx,dy)>8)g.moved=true;
+      if(IV.sc>1){IV.x=g.ox+dx;IV.y=g.oy+dy;ivApply()}else if(g.moved){const im=st.querySelector('img');im.style.transform=`translate(${dx}px,${dy>0?dy:0}px)`}}});
+  const end=e=>{if(!P.has(e.pointerId))return;P.delete(e.pointerId);if(!g)return;
+    if(g.mode==='pinch'){if(P.size<2)g=null;return}
+    const dx=e.clientX-g.x,dy=e.clientY-g.y,gg=g;g=null;
+    if(IV.sc>1){if(!gg.moved&&now()-gg.t<300&&now()-lastTap<300){IV.sc=1;ivApply()}if(!gg.moved)lastTap=now();return}
+    if(gg.moved&&Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)){ivShow(IV.i+(dx<0?1:-1));return}
+    if(gg.moved&&dy>110&&dy>Math.abs(dx)){closeViewer();return}
+    ivApply();
+    if(!gg.moved){const t=now();if(t-lastTap<300){IV.sc=2.5;ivApply();lastTap=0}else{lastTap=t;setTimeout(()=>{if(lastTap===t&&IV.el){IV.el.classList.toggle('hideui');lastTap=0}},300)}}};
+  st.addEventListener('pointerup',end);st.addEventListener('pointercancel',end);
+  st.addEventListener('wheel',e=>{e.preventDefault();IV.sc=Math.max(1,Math.min(6,IV.sc*(e.deltaY<0?1.15:1/1.15)));ivApply()},{passive:false});
+  v.addEventListener('click',e=>{const b=e.target.closest('[data-iv]');if(!b)return;const k=b.dataset.iv;
+    if(k==='x')closeViewer();else if(k==='prev')ivShow(IV.i-1);else if(k==='next')ivShow(IV.i+1);else if(k==='save')ivSave(IV.i);else if(k==='all')ivAllMenu(b)})}
+document.addEventListener('keydown',e=>{if(!IV.el)return;if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeViewer()}else if(e.key==='ArrowLeft'){ivShow(IV.i-1)}else if(e.key==='ArrowRight'){ivShow(IV.i+1)}},true);
+const IV_EXT={'image/jpeg':'jpg','image/png':'png','image/gif':'gif','image/webp':'webp','image/heic':'heic','image/svg+xml':'svg','image/avif':'avif'};
+async function ivBlob(src){const r=await fetch(src);if(!r.ok)throw 0;return await r.blob()}
+function ivName(i,b){return `${safeName(IV.title)}-${pad(i+1)}.${IV_EXT[b.type]||'jpg'}`}
+async function ivSave(i){try{toast('저장 중…');const b=await ivBlob(IV.list[i]);if(await downloadFile(ivName(i,b),b))toast('이미지를 저장했습니다')}
+  catch(e){if(/^https?:/.test(IV.list[i])){window.open(IV.list[i],'_blank');toast('열린 이미지를 길게 눌러 저장해 주세요')}else toast('저장하지 못했습니다')}}
+function ivAllMenu(a){const n=IV.list.length;const items=[{h:`이미지 ${n}장 저장`},{label:'기기에 다운로드',fn:()=>ivAll(false)}];
+  if(navigator.canShare&&navigator.share)items.push({label:'공유 시트로 저장 (사진 앱 등)',fn:()=>ivAll(true)});menu(a,items)}
+async function ivAll(share){const n=IV.list.length;let ok=0,fail=0;const files=[];
+  for(let i=0;i<n;i++){toast(`준비 중… ${i+1}/${n}`);try{const b=await ivBlob(IV.list[i]);const nm=ivName(i,b);if(share)files.push(new File([b],nm,{type:b.type||'image/jpeg'}));else{if(await downloadFile(nm,b))ok++;else fail++;await new Promise(r=>setTimeout(r,300))}}catch(e){fail++}}
+  if(share){if(!files.length){toast('저장하지 못했습니다');return}try{await navigator.share({files});toast(`${files.length}장을 공유 시트로 보냈습니다`)}catch(e){if(e&&e.name!=='AbortError')toast('공유하지 못했습니다')}return}
+  toast(fail?`${ok}장 저장, ${fail}장 실패`:`${ok}장을 모두 저장했습니다`)}
+document.addEventListener('pointerdown',e=>{const im=e.target.closest&&e.target.closest('.ln img,.md img');ivDown=im?{im,x:e.clientX,y:e.clientY,t:now()}:null;if(im&&e.pointerType==='mouse')e.preventDefault()},true);
+document.addEventListener('pointerup',e=>{const d=ivDown;ivDown=null;if(!d||Math.hypot(e.clientX-d.x,e.clientY-d.y)>10||now()-d.t>600||!document.contains(d.im))return;ivSkip=now();openViewer(d.im)},true);
+document.addEventListener('touchend',e=>{if(now()-ivSkip<150&&e.cancelable)e.preventDefault()},{capture:true,passive:false});
+document.addEventListener('click',e=>{if(now()-ivSkip<500&&e.target.closest&&e.target.closest('.ln img,.md img,.ln,.md')){e.preventDefault();e.stopPropagation()}},true);
 
 /* ---------- attachments ---------- */
 const cleanName=n=>n.replace(/[\\/:*?"<>|#^\[\]]/g,' ');
@@ -1489,7 +1556,7 @@ function go(view){flushEdit();S.view=view;S.q='';S.selMode=false;S.sel.clear();c
 document.addEventListener('click',e=>{
   if(menuEl&&!e.target.closest('.menu')&&now()-menuAt>40)closeMenu();if(sugEl&&!e.target.closest('.suggest'))closeSug();
   if(now()-S.justDragged<250)return;
-  const t=e.target;if(t.closest('#live')||t.closest('.veil'))return;
+  const t=e.target;if(t.closest('#live')||t.closest('.veil')||t.closest('.imgv'))return;
   const tw=t.closest('[data-tw]');if(tw&&tw.textContent){const id=tw.dataset.tw;const st=SET();putSet({side:{...st.side,collapsed:{...st.side.collapsed,[id]:!st.side.collapsed[id]}}});renderSide();return}
   const sc=t.closest('[data-col]');if(sc){const k='sec_'+sc.dataset.col;const st=SET();putSet({side:{...st.side,collapsed:{...st.side.collapsed,[k]:!st.side.collapsed[k]}}});sc.closest('.secbox').classList.toggle('col');return}
   const fm=t.closest('[data-fmenu]');if(fm){e.stopPropagation();folderMenu(fm,fm.dataset.fmenu);return}
